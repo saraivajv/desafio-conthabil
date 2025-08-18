@@ -5,20 +5,26 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 from dateutil.relativedelta import relativedelta
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select, WebDriverWait
 
 # --- Configurações ---
-DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "downloads")
-DOM_URL = "https://www.natal.rn.gov.br/dom"
-UPLOAD_URL = "https://0x0.st"
-WINDOWS_TEMP_DIR_PATH = "/mnt/c/temp_selenium_profiles"
+load_dotenv()
 
-# Garante que o diretório de downloads exista
+PROJECT_DOWNLOADS_FOLDER_NAME = os.getenv(
+    "PROJECT_DOWNLOADS_FOLDER_NAME", "downloads"
+)
+DOM_URL = os.getenv("DOM_URL")
+UPLOAD_URL = os.getenv("UPLOAD_URL")
+API_ENDPOINT = os.getenv("API_ENDPOINT")
+DOWNLOAD_DIR = os.path.join(
+    os.path.dirname(__file__), "..", PROJECT_DOWNLOADS_FOLDER_NAME
+)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
@@ -30,20 +36,10 @@ def get_target_competence():
 
 
 def setup_driver():
-    """Configura o driver do Selenium para baixar arquivos no diretório correto."""
+    """Configura o driver do Selenium (sem a necessidade de gerenciar downloads)."""
     chrome_options = Options()
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-
-    chrome_options.add_experimental_option(
-        "prefs",
-        {
-            "download.default_directory": DOWNLOAD_DIR,
-            "download.prompt_for_download": False,
-            "download.directory_upgrade": True,
-            "plugins.always_open_pdf_externally": True,
-        },
-    )
 
     service = ChromeService()
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -51,153 +47,151 @@ def setup_driver():
 
 
 def collect_pdfs(driver, target_month, target_year):
-    """Navega no site, encontra e baixa os PDFs da competência alvo."""
+    """Navega no site, filtra pela data e baixa os PDFs usando requests."""
     print(f"Buscando publicações de {target_month}/{target_year}...")
     driver.get(DOM_URL)
 
     try:
-        # --- MUDANÇA IMPORTANTE: ESPERA INTELIGENTE ---
-        # Espera até 15 segundos para que os containers das publicações apareçam na página.
-        # ATENÇÃO: a classe 'dom-edicao-container' pode precisar de ajuste.
-        print("Aguardando os elementos da página carregarem...")
-        wait = WebDriverWait(driver, 15)
+        print("Iniciando filtragem...")
+        time.sleep(2)
+
+        Select(
+            driver.find_element(By.CSS_SELECTOR, "select[name='mes']")
+        ).select_by_value(target_month)
+        print(f"Mês '{target_month}' selecionado.")
+        time.sleep(0.5)
+
+        Select(
+            driver.find_element(By.CSS_SELECTOR, "select[name='ano']")
+        ).select_by_value(target_year)
+        print(f"Ano '{target_year}' selecionado.")
+        time.sleep(0.5)
+
+        search_button = driver.find_element(
+            By.CSS_SELECTOR, "button[type='submit'][data-attach-loading]"
+        )
+        driver.execute_script("arguments[0].click();", search_button)
+        print("Botão 'Pesquisar' clicado. Aguardando resultados...")
+
+        wait = WebDriverWait(driver, 20)
+        texto_esperado = f"/{target_month}/{target_year}"
         wait.until(
-            EC.presence_of_all_elements_located(
-                (By.CLASS_NAME, "dom-edicao-container")
+            EC.presence_of_element_located(
+                (By.XPATH, f"//tbody/tr//a[contains(., '{texto_esperado}')]")
             )
         )
-        print("Elementos carregados. Analisando o HTML...")
+        print("Tabela com resultados carregada.")
 
     except Exception as e:
-        print(f"Erro ao esperar pelos elementos da página: {e}")
         print(
-            "A página pode ter mudado ou não há publicações. Verifique o seletor 'dom-edicao-container'."
+            f"ERRO: Não foi possível carregar os resultados para {target_month}/{target_year}: {e}"
         )
-        return  # Sai da função se não encontrar nada
+        driver.save_screenshot("debug_screenshot.png")
+        print("Screenshot 'debug_screenshot.png' salvo para análise.")
+        return 0
 
-    # Usa o page_source APÓS a espera, garantindo que o conteúdo está lá
-    page_source = driver.page_source
-    soup = BeautifulSoup(page_source, "html.parser")
-
-    publications = soup.find_all("div", class_="dom-edicao-container")
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    publications = soup.select("tbody tr")
     print(
-        f"Análise inicial do HTML encontrou {len(publications)} publicações na página.\n"
+        f"Análise do HTML encontrou {len(publications)} linhas na tabela filtrada.\n"
     )
 
     downloaded_files_count = 0
-    for i, pub in enumerate(publications):
-        print(f"--- Processando Publicação #{i+1} ---")
+    for i, pub_row in enumerate(publications):
+        print(f"--- Processando Linha #{i+1} ---")
         try:
-            # --- DEBUG: Vamos ver o texto da data que está sendo extraído ---
-            date_element = pub.find("div", class_="dom-edicao-data")
-            date_str = (
-                date_element.text.strip()
-                if date_element
-                else "DATA NÃO ENCONTRADA"
-            )
-            print(f"Texto da data extraído: '{date_str}'")
+            link_element = pub_row.select_one("td.sorting_1 a")
+            if not link_element:
+                print("   Link não encontrado nesta linha. Ignorando.")
+                continue
 
-            # Tenta converter a data para o formato esperado
+            date_str = link_element.text.strip().split(" ")[-1]
             pub_date = datetime.strptime(date_str, "%d/%m/%Y")
-            print(
-                f"Data convertida com sucesso: {pub_date.strftime('%Y-%m-%d')}"
-            )
 
-            # Verifica se a publicação é do mês e ano alvo
-            if (
-                pub_date.strftime("%m") == target_month
-                and pub_date.strftime("%Y") == target_year
-            ):
-                link_element = pub.find("a", href=True)
-                if link_element:
-                    pdf_url = link_element["href"]
-                    print(f"  ==> DATA CORRETA! Baixando PDF de {date_str}...")
+            if pub_date.strftime("%m") == target_month:
+                pdf_url = link_element["href"]
+                print(f"   ==> DATA CORRETA! Baixando PDF de {date_str}...")
 
-                    element_to_click = driver.find_element(
-                        By.CSS_SELECTOR, f'a[href="{pdf_url}"]'
-                    )
-                    element_to_click.click()
+                filename = pdf_url.split("/")[-1]
+                destination_path = os.path.join(DOWNLOAD_DIR, filename)
 
-                    downloaded_files_count += 1
-                    time.sleep(3)
-                else:
-                    print(
-                        "  Aviso: Data correta, mas nenhum link de PDF encontrado."
-                    )
+                response = requests.get(pdf_url, stream=True, timeout=30)
+                response.raise_for_status()
+
+                with open(destination_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                print(f"   Arquivo '{filename}' salvo com sucesso.")
+                downloaded_files_count += 1
             else:
-                print(
-                    f"  Data fora do período alvo ({target_month}/{target_year}). Ignorando."
-                )
+                print(f"   Data fora do período alvo. Ignorando.")
 
-        except (AttributeError, ValueError) as e:
-            print(f"  ERRO ao processar esta publicação: {e}")
-            print(
-                "  Verifique se o seletor 'dom-edicao-data' e o formato da data ('%d/%m/%Y') estão corretos."
-            )
-
-        print("-" * (len("--- Processando Publicação #1 ---")))
+        except Exception as e:
+            print(f"   ERRO ao processar esta linha: {e}")
+        finally:
+            print("-" * 25)
 
     if downloaded_files_count == 0:
         print("\nNenhum arquivo baixado para o período alvo.")
     else:
         print(
-            f"\nTotal de {downloaded_files_count} arquivos baixados. Aguardando conclusão..."
+            f"\nTotal de {downloaded_files_count} arquivos baixados diretamente."
         )
-        time.sleep(15)
+
+    return downloaded_files_count
 
 
 def upload_files():
     """Faz o upload dos arquivos da pasta downloads para o 0x0.st."""
-    uploaded_urls = []
     print("\nIniciando upload dos arquivos...")
-
     pdf_files = [f for f in os.listdir(DOWNLOAD_DIR) if f.endswith(".pdf")]
 
     if not pdf_files:
         print("Nenhum PDF para fazer upload.")
         return []
 
+    uploaded_urls = []
     for filename in pdf_files:
         filepath = os.path.join(DOWNLOAD_DIR, filename)
         try:
             with open(filepath, "rb") as f:
                 files = {"file": (filename, f)}
-                response = requests.post(UPLOAD_URL, files=files)
+                response = requests.post(UPLOAD_URL, files=files, timeout=60)
                 response.raise_for_status()
 
                 file_url = response.text.strip()
                 uploaded_urls.append(file_url)
-                print(f"  - Upload de {filename} bem-sucedido: {file_url}")
+                print(f"   - Upload de {filename} bem-sucedido: {file_url}")
 
         except requests.exceptions.RequestException as e:
-            print(f"  Erro ao fazer upload de {filename}: {e}")
+            print(f"   Erro ao fazer upload de {filename}: {e}")
         except IOError as e:
-            print(f"  Erro ao ler o arquivo {filename}: {e}")
+            print(f"   Erro ao ler o arquivo {filename}: {e}")
 
     return uploaded_urls
 
 
 def save_urls_to_api(urls, competence):
     """Envia as URLs coletadas para a API Django."""
-    API_ENDPOINT = "http://127.0.0.1:8000/api/publications/"
     print(
         f"\nEnviando {len(urls)} URLs para a API na competência {competence}..."
     )
-
     success_count = 0
     for url in urls:
         payload = {"file_url": url, "competence": competence}
         try:
-            response = requests.post(API_ENDPOINT, json=payload)
+            response = requests.post(API_ENDPOINT, json=payload, timeout=15)
             if response.status_code == 201:
-                print(f"  - URL salva: {url}")
+                print(f"   - URL salva: {url}")
                 success_count += 1
             else:
                 print(
-                    f"  - Falha ao salvar URL {url}: {response.status_code} - {response.text}"
+                    f"   - Falha ao salvar URL {url}: {response.status_code} - {response.text}"
                 )
+
         except requests.exceptions.RequestException as e:
-            print(f"  - Erro de conexão com a API: {e}")
+            print(f"   - Erro de conexão com a API: {e}")
 
     print(f"{success_count}/{len(urls)} URLs salvas com sucesso.")
 
@@ -208,17 +202,12 @@ def main():
     competence_str = f"{target_year}-{target_month}"
 
     driver = setup_driver()
-
     try:
-        collect_pdfs(driver, target_month, target_year)
-        uploaded_urls = upload_files()
-
-        if uploaded_urls:
-            # Com a API rodando, chame a nova função
-            save_urls_to_api(uploaded_urls, competence_str)
-        else:
-            print("\nNenhuma URL foi gerada para salvar na API.")
-
+        downloads_count = collect_pdfs(driver, target_month, target_year)
+        if downloads_count > 0:
+            uploaded_urls = upload_files()
+            if uploaded_urls:
+                save_urls_to_api(uploaded_urls, competence_str)
     finally:
         driver.quit()
         print("\nScript finalizado.")
