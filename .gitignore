@@ -1,0 +1,38 @@
+# Ambiente Virtual
+# Nunca envie a pasta do ambiente virtual para o repositório.
+/venv/
+/src/venv/
+
+# Arquivos de Segredos e Configuração Local
+# O .env contém senhas e chaves de API, deve ser sempre ignorado.
+.env
+*.env
+
+# Saídas do Projeto (Arquivos Baixados)
+# A pasta com os PDFs baixados é um resultado do script, não parte do código-fonte.
+/downloads/
+
+# Caches e arquivos compilados do Python
+# O Python cria essas pastas e arquivos automaticamente para otimização.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Arquivos do Django
+# Banco de dados de teste local. O banco de produção será no Docker.
+db.sqlite3
+*.sqlite3
+
+# Configurações de IDEs e Editores
+# Evita conflitos de configuração de ambiente entre desenvolvedores.
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Arquivos gerados pelo Sistema Operacional
+# Arquivos de metadados do macOS e Windows.
+.DS_Store
+Thumbs.db
