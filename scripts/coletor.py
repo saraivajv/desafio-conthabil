@@ -81,6 +81,22 @@ def collect_pdfs(driver, target_month, target_year):
             )
         )
         print("Tabela com resultados carregada.")
+        try:
+            print("Alterando a exibição para 50 registros por página...")
+            length_dropdown = Select(
+                driver.find_element(
+                    By.CSS_SELECTOR, "select[name='example_length']"
+                )
+            )
+            length_dropdown.select_by_value("50")
+            print(
+                "Exibição alterada para 50. Aguardando a tabela recarregar..."
+            )
+            time.sleep(3)
+        except Exception as e:
+            print(
+                f"   AVISO: Não foi possível alterar a exibição para 50 registros. Continuando com o padrão. Erro: {e}"
+            )
 
     except Exception as e:
         print(
@@ -151,23 +167,35 @@ def upload_files():
         print("Nenhum PDF para fazer upload.")
         return []
 
+    headers = {"User-Agent": None}
+
     uploaded_urls = []
     for filename in pdf_files:
         filepath = os.path.join(DOWNLOAD_DIR, filename)
         try:
+            print(f"  - Fazendo upload de {filename}...")
             with open(filepath, "rb") as f:
-                files = {"file": (filename, f)}
-                response = requests.post(UPLOAD_URL, files=files, timeout=60)
+                files = {"file": (filename, f, "application/pdf")}
+
+                response = requests.post(
+                    UPLOAD_URL, files=files, headers=headers, timeout=60
+                )
                 response.raise_for_status()
 
                 file_url = response.text.strip()
                 uploaded_urls.append(file_url)
-                print(f"   - Upload de {filename} bem-sucedido: {file_url}")
+                print(f"    Upload de {filename} bem-sucedido: {file_url}")
 
         except requests.exceptions.RequestException as e:
-            print(f"   Erro ao fazer upload de {filename}: {e}")
+            print(f"    Erro ao fazer upload de {filename}: {e}")
+            if e.response is not None:
+                print(f"    Resposta do servidor: {e.response.text}")
         except IOError as e:
-            print(f"   Erro ao ler o arquivo {filename}: {e}")
+            print(f"    Erro ao ler o arquivo {filename}: {e}")
+        finally:
+            wait_time = 3
+            print(f"    Aguardando {wait_time} segundos...")
+            time.sleep(wait_time)
 
     return uploaded_urls
 
