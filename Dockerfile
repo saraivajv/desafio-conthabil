@@ -8,8 +8,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ .
+# Copia todo o código do projeto para o contêiner
+COPY . .
 
-EXPOSE 8000
+# Expõe a porta que o Gunicorn vai usar
+EXPOSE 10000
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Torna o script de entrada executável e o define como comando de inicialização
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
