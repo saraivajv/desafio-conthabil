@@ -1,9 +1,5 @@
 #!/bin/sh
 
-echo "--- Verificando variáveis de ambiente ---"
-echo "DATABASE_URL encontrada: [${DATABASE_URL}]"
-echo "--- Fim da verificação ---"
-
 # Aplica as migrações do banco de dados
 echo "Aplicando migrações do banco de dados..."
 python manage.py migrate --no-input
