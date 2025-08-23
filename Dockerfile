@@ -9,7 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia todo o código do projeto para o contêiner
-COPY . .
+COPY ./src .
 
 # Expõe a porta que o Gunicorn vai usar
 EXPOSE 10000
